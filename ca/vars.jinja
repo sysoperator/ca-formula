@@ -1,0 +1,6 @@
+{%- set tplroot = tpldir.split('/')[0] -%}
+{%- from tplroot ~ "/map.jinja" import ca with context -%}
+
+{%- set ca_server = ca.ca_server -%}
+{%- set ca_pki_dir = ca.pki_dir -%}
+{%- set ca_issued_certs_dir = ca_pki_dir + '/' + ca.issued_certs_dir -%}

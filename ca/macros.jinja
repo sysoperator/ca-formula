@@ -1,0 +1,102 @@
+{%- set tplroot = tpldir.split('/')[0] -%}
+{%- from tplroot ~ "/map.jinja" import ca with context -%}
+{%- from tplroot ~ "/vars.jinja" import
+    ca_issued_certs_dir
+with context -%}
+
+{%- set watch_in_modules = [] -%}
+
+{%- macro valid_certificate(name, path, days=30) -%}
+{{ name }}.crt-valid:
+  tls.valid_certificate:
+    - name: {{ path }}
+    - days: {{ days }}
+    - onlyif:
+      - test -f {{ path }}
+{%- endmacro -%}
+
+{%- macro certificate_private_key(name, path, algo='rsa', keysize=2048, owner=None) -%}
+{{ name }}.key:
+  x509.private_key_managed:
+    - name: {{ path }}
+    - algo: {{ algo }}
+    - keysize: {{ keysize }}
+  {%- if owner %}
+    - user: {{ owner }}
+    - require:
+      - user: {{ owner }}
+  {%- endif %}
+    - require_in:
+      - x509: {{ name }}.crt
+{%- endmacro -%}
+
+{%- macro certificate(name, path, key_path, signing_policy='root_ca', digest='sha384', extendedKeyUsage='clientAuth', days_valid=365, days_remaining=30, subject_CN=None, subject_O=None, subject_SAN=None, backup=True, validate=True) -%}
+{{ name }}.crt:
+  x509.certificate_managed:
+    - name: {{ path }}
+    - ca_server: {{ ca.ca_server }}
+    - signing_policy: {{ signing_policy }} 
+    - private_key: {{ key_path }}
+    - digest: {{ digest }}
+    - CN: {{ subject_CN }}
+  {%- if subject_O %}
+    - O: {{ subject_O }}
+  {%- endif %}
+  {%- if subject_SAN %}
+    - subjectAltName: {{ subject_SAN }}
+  {%- endif %}
+    - extendedKeyUsage: "{{ extendedKeyUsage }}"
+    - days_valid: {{ days_valid }}
+    - days_remaining: {{ days_remaining }}
+    - backup: {{ backup }}
+  {%- if salt['file.file_exists'](path) and validate == True %}
+    - onfail:
+      - tls: {{ name }}.crt-valid
+  {%- endif %}
+  {%- if watch_in_modules|length > 0 %}
+    - watch_in:
+      {% for module in watch_in_modules -%}
+	  - module: {{ module }}
+      {% endfor -%}
+  {%- endif %}
+{%- endmacro -%}
+
+{%- macro cacertificate(name, path, key_path, type='CA', signing_policy=None, digest='sha256', days_valid=1825, subject_CN=None, subject_O=None, append_certs=[]) -%}
+{{ name }}.crt:
+  x509.certificate_managed:
+    - name: {{ path }}
+  {%- if type == 'subCA' %}
+    - ca_server: {{ ca.ca_server }}
+    - signing_policy: {{ signing_policy }}
+    - private_key: {{ key_path }}
+  {%- endif %}
+    - signing_private_key: {{ key_path }}
+    - digest: {{ digest }}
+    - CN: {{ subject_CN }}
+  {%- if subject_O %}
+    - O: {{ subject_O }}
+  {%- endif %}
+  {%- if type == 'CA' %}
+    - basicConstraints: {{ ca.root_ca.basicConstraints|default("critical CA:TRUE,pathlen:1") }}
+    - subjectKeyIdentifier: hash
+    - authorityKeyIdentifier: keyid:always,issuer
+  {%- endif %}
+    - days_valid: {{ days_valid }}
+    - days_remaining: 0
+  {%- if append_certs|length > 0 %}
+    - append_certs:
+    {%- for cert in append_certs %}
+        - {{ cert }}
+    {%- endfor %}
+  {%- endif %}
+    - require:
+      - file: {{ ca_issued_certs_dir }}
+  module.run:
+    - name: mine.send
+    - m_name: {{ name }}.crt
+    - kwargs:
+        mine_function: x509.get_pem_entries
+        glob_path: {{ path }}
+    - onchanges:
+      - x509: {{ path }}
+{%- endmacro -%}
